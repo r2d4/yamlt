@@ -2,14 +2,14 @@ package main
 
 import (
 	"fmt"
-	"reflect"
 
-	"k8s.io/api/apps/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/scheme"
+	"github.com/sirupsen/logrus"
+
+	"github.com/pkg/errors"
+	"gopkg.in/yaml.v2"
 )
 
-var yaml = `
+var deploymentYAML = `
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,102 +26,143 @@ spec:
 
 `
 
-func main() {
-	_ = metav1.ObjectMeta{}
-	decode := scheme.Codecs.UniversalDeserializer().Decode
+var overlayYAML = `
+# v1.PodTemplateSpec
+template:
+  metadata:
+    name: the-pod
+  spec:
+    containers:
+    - name: the-container-remix
+      image: the-matrix
+`
 
-	obj, _, err := decode([]byte(yaml), nil, nil)
-	if err != nil {
-		fmt.Printf("%#v", err)
-	}
-
-	deployment := obj.(*v1.Deployment)
-	// spew.Dump(&deployment)
-
-	getAllEmbededTypes(deployment)
-	//fmt.Printf("%#v\n", deployment)
+type overlay struct {
+	key      string
+	metadata map[string]string
+	data     map[interface{}]interface{}
+	found    bool
 }
 
-func getAllEmbededTypes(d *v1.Deployment) error {
-	translate(d)
+func main() {
+	if err := apply([]byte(deploymentYAML), []byte(overlayYAML)); err != nil {
+		logrus.Fatal(err)
+	}
+}
+
+func apply(baseYAML, overlayYAML []byte) error {
+	base := make(map[interface{}]interface{})
+	if err := yaml.Unmarshal(baseYAML, &base); err != nil {
+		return errors.Wrap(err, "reading base yaml")
+	}
+
+	o, err := newOverlay(overlayYAML)
+	if err != nil {
+		return errors.Wrap(err, "generating overlay")
+	}
+	fmt.Printf("%+v", o)
+
+	overlayRecursive(base, o)
+
+	out, err := yaml.Marshal(base)
+	if err != nil {
+		return errors.Wrap(err, "marshaling base yaml")
+	}
+	fmt.Println(string(out))
+
 	return nil
 }
 
-func translate(obj interface{}) interface{} {
-	// Wrap the original in a reflect.Value
-	original := reflect.ValueOf(obj)
-
-	copy := reflect.New(original.Type()).Elem()
-	translateRecursive(original)
-
-	// Remove the reflection wrapper
-	return copy.Interface()
-}
-
-func translateRecursive(original reflect.Value) {
-	//fmt.Printf("original type %T, original value %+v, original kind %s\n", original, original, original.Kind())
-	switch original.Kind() {
-	// The first cases handle nested structures and translate them recursively
-
-	// If it is a pointer we need to unwrap and call once again
-	case reflect.Ptr:
-		// To get the actual value of the original we have to call Elem()
-		// At the same time this unwraps the pointer so we don't end up in
-		// an infinite recursion
-		originalValue := original.Elem()
-		// Check if the pointer is nil
-		if !originalValue.IsValid() {
-			return
-		}
-		// Unwrap the newly created pointer
-		translateRecursive(originalValue)
-
-	// If it is an interface (which is very similar to a pointer), do basically the
-	// same as for the pointer. Though a pointer is not the same as an interface so
-	// note that we have to call Elem() after creating a new object because otherwise
-	// we would end up with an actual pointer
-	case reflect.Interface:
-		// Get rid of the wrapping interface
-		originalValue := original.Elem()
-
-		// Create a new object. Now new gives us a pointer, but we want the value it
-		// points to, so we have to call Elem() to unwrap it
-		translateRecursive(originalValue)
-
-	// If it is a struct we translate each field
-	case reflect.Struct:
-		fmt.Printf("the type %T\n", original.Interface())
-		for i := 0; i < original.NumField(); i++ {
-			if original.Field(i).CanInterface() {
-				typemeta, ok := original.Field(i).Interface().(metav1.ObjectMeta)
-				if ok {
-					fmt.Printf("\n\nFOUND A TYPE! from %T %+v\n\n", original.Interface(), typemeta)
-				}
+func newOverlay(overlayYAML []byte) (*overlay, error) {
+	m := make(map[interface{}]interface{})
+	if err := yaml.Unmarshal(overlayYAML, &m); err != nil {
+		return nil, errors.Wrap(err, "reading overlay yaml")
+	}
+	o := &overlay{
+		data:     m,
+		metadata: map[string]string{},
+	}
+	// Use top level key as overlay key
+	for k := range m {
+		o.key = k.(string)
+		break
+	}
+	// Look for object meta.
+	// Next level key should be map
+	fields, ok := m[o.key].(map[interface{}]interface{})
+	if !ok {
+		return nil, fmt.Errorf("Overlay needs to have an metav1.ObjectMeta: %T", m[o.key])
+	}
+	for k, v := range fields {
+		//fmt.Printf("key: %+v, value: %+v\n", k, v)
+		if k.(string) == "metadata" {
+			metadata, ok := v.(map[interface{}]interface{})
+			if !ok {
+				continue
 			}
-			translateRecursive(original.Field(i))
+			for mk, mv := range metadata {
+				o.metadata[mk.(string)] = mv.(string)
+			}
+			return o, nil
 		}
-
-	// If it is a slice we create a new slice and translate each element
-	case reflect.Slice:
-		for i := 0; i < original.Len(); i++ {
-			translateRecursive(original.Index(i))
-		}
-
-	// If it is a map we create a new map and translate each value
-	case reflect.Map:
-		for _, key := range original.MapKeys() {
-			originalValue := original.MapIndex(key)
-			// New gives us a pointer, but again we want the value
-			translateRecursive(originalValue)
-		}
-
-	// Otherwise we cannot traverse anywhere so this finishes the the recursion
-
-	// If it is a string translate it (yay finally we're doing what we came for)
-	case reflect.String:
-
-	// And everything else will simply be taken from the original
-	default:
 	}
 
+	return nil, nil
+}
+
+func overlayRecursive(i interface{}, o *overlay) {
+	switch t := i.(type) {
+	case []interface{}:
+		//fmt.Printf("type is %T: value: %+v\n\n", t, t)
+		for _, v := range t {
+			overlayRecursive(v, o)
+		}
+	case map[interface{}]interface{}:
+		//fmt.Printf("type is %T: value: %+v\n\n", t, t)
+		for k, v := range t {
+			if !matches(k.(string), v, o) {
+				overlayRecursive(v, o)
+				continue
+			}
+			t[k] = o.data
+			o.found = true
+			fmt.Println("found")
+		}
+	}
+}
+
+func matches(baseKey string, baseValue interface{}, o *overlay) bool {
+	// fmt.Printf("matches: baseKey: %s baseValue:%+v overlay: %+v\n", baseKey, baseValue, o)
+	if baseKey == "metadata" {
+		baseMeta, ok := convert(baseValue)
+		if ok {
+			for _, k := range []string{"name", "generateName", "namespace"} {
+				if baseMeta[k] != o.metadata[k] {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func convert(i interface{}) (map[string]string, bool) {
+	m, ok := i.(map[interface{}]interface{})
+	if !ok {
+		return nil, false
+	}
+	ret := map[string]string{}
+	for k, v := range m {
+		kStr, ok := k.(string)
+		if !ok {
+			return nil, false
+		}
+		vStr, ok := v.(string)
+		if !ok {
+			return nil, false
+		}
+		ret[kStr] = vStr
+	}
+	return ret, true
 }
