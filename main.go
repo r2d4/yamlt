@@ -2,40 +2,15 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"io/ioutil"
+	"os"
 
 	"github.com/sirupsen/logrus"
 
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
 )
-
-var deploymentYAML = `
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: the-deployment
-spec:
-  replicas: 3
-  template:
-    metadata:
-      name: the-pod
-    spec:
-      containers:
-      - name: the-container
-        image: nginx
-
-`
-
-var overlayYAML = `
-# v1.PodTemplateSpec
-template:
-  metadata:
-    name: the-pod
-  spec:
-    containers:
-    - name: the-container-remix
-      image: the-matrix
-`
 
 type overlay struct {
 	key      string
@@ -45,12 +20,25 @@ type overlay struct {
 }
 
 func main() {
-	if err := apply([]byte(deploymentYAML), []byte(overlayYAML)); err != nil {
+	if len(os.Args) < 3 {
+		logrus.Fatal("Need to specify at least two files, a base and an overlay")
+	}
+	baseYAML, err := ioutil.ReadFile(os.Args[1])
+	if err != nil {
+		logrus.Fatal(err, "reading base yaml file")
+	}
+
+	overlayYAML, err := ioutil.ReadFile(os.Args[2])
+	if err != nil {
+		logrus.Fatal(err, "reading overlay yaml file")
+	}
+	if err := apply(os.Stdout, []byte(baseYAML), []byte(overlayYAML)); err != nil {
 		logrus.Fatal(err)
 	}
+
 }
 
-func apply(baseYAML, overlayYAML []byte) error {
+func apply(out io.Writer, baseYAML, overlayYAML []byte) error {
 	base := make(map[interface{}]interface{})
 	if err := yaml.Unmarshal(baseYAML, &base); err != nil {
 		return errors.Wrap(err, "reading base yaml")
@@ -60,15 +48,12 @@ func apply(baseYAML, overlayYAML []byte) error {
 	if err != nil {
 		return errors.Wrap(err, "generating overlay")
 	}
-	fmt.Printf("%+v", o)
-
 	overlayRecursive(base, o)
-
-	out, err := yaml.Marshal(base)
+	newManifest, err := yaml.Marshal(base)
 	if err != nil {
 		return errors.Wrap(err, "marshaling base yaml")
 	}
-	fmt.Println(string(out))
+	fmt.Fprint(out, string(newManifest))
 
 	return nil
 }
@@ -101,7 +86,15 @@ func newOverlay(overlayYAML []byte) (*overlay, error) {
 				continue
 			}
 			for mk, mv := range metadata {
-				o.metadata[mk.(string)] = mv.(string)
+				mkStr, ok := mk.(string)
+				if !ok {
+					continue
+				}
+				mvStr, ok := mv.(string)
+				if !ok {
+					continue
+				}
+				o.metadata[mkStr] = mvStr
 			}
 			return o, nil
 		}
@@ -111,6 +104,9 @@ func newOverlay(overlayYAML []byte) (*overlay, error) {
 }
 
 func overlayRecursive(i interface{}, o *overlay) {
+	if o.found {
+		return
+	}
 	switch t := i.(type) {
 	case []interface{}:
 		//fmt.Printf("type is %T: value: %+v\n\n", t, t)
@@ -124,26 +120,36 @@ func overlayRecursive(i interface{}, o *overlay) {
 				overlayRecursive(v, o)
 				continue
 			}
-			t[k] = o.data
+			t[o.key] = o.data[o.key]
 			o.found = true
-			fmt.Println("found")
+			return
 		}
 	}
 }
 
 func matches(baseKey string, baseValue interface{}, o *overlay) bool {
-	// fmt.Printf("matches: baseKey: %s baseValue:%+v overlay: %+v\n", baseKey, baseValue, o)
-	if baseKey == "metadata" {
-		baseMeta, ok := convert(baseValue)
-		if ok {
-			for _, k := range []string{"name", "generateName", "namespace"} {
-				if baseMeta[k] != o.metadata[k] {
-					return false
-				}
-			}
-			return true
-		}
+	if baseKey != o.key {
+		return false
 	}
+	nestedMap, ok := baseValue.(map[interface{}]interface{})
+	if !ok {
+		return false
+	}
+	metadata, ok := nestedMap["metadata"]
+	if !ok {
+		return false
+	}
+	baseMeta, ok := convert(metadata)
+	if !ok {
+		return false
+	}
+	for _, k := range []string{"name", "generateName", "namespace"} {
+		if baseMeta[k] != o.metadata[k] {
+			return false
+		}
+		return true
+	}
+
 	return false
 }
 
@@ -156,11 +162,11 @@ func convert(i interface{}) (map[string]string, bool) {
 	for k, v := range m {
 		kStr, ok := k.(string)
 		if !ok {
-			return nil, false
+			continue
 		}
 		vStr, ok := v.(string)
 		if !ok {
-			return nil, false
+			continue
 		}
 		ret[kStr] = vStr
 	}

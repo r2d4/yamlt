@@ -1,0 +1,10 @@
+# v1.PodTemplateSpec
+template:
+  metadata:
+    name: the-pod
+    labels:
+      app: redis
+  spec:
+    containers:
+    - name: the-container-remix
+      image: the-matrix

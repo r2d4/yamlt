@@ -4,7 +4,12 @@ metadata:
   name: the-deployment
 spec:
   replicas: 3
+  selector:
+    matchLabels:
+      app: redis
   template:
+    metadata:
+      name: the-pod
     spec:
       containers:
       - name: the-container
