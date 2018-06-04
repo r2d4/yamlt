@@ -79,7 +79,6 @@ func newOverlay(overlayYAML []byte) (*overlay, error) {
 		return nil, fmt.Errorf("Overlay needs to have an metav1.ObjectMeta: %T", m[o.key])
 	}
 	for k, v := range fields {
-		//fmt.Printf("key: %+v, value: %+v\n", k, v)
 		if k.(string) == "metadata" {
 			metadata, ok := v.(map[interface{}]interface{})
 			if !ok {
@@ -109,12 +108,10 @@ func overlayRecursive(i interface{}, o *overlay) {
 	}
 	switch t := i.(type) {
 	case []interface{}:
-		//fmt.Printf("type is %T: value: %+v\n\n", t, t)
 		for _, v := range t {
 			overlayRecursive(v, o)
 		}
 	case map[interface{}]interface{}:
-		//fmt.Printf("type is %T: value: %+v\n\n", t, t)
 		for k, v := range t {
 			if !matches(k.(string), v, o) {
 				overlayRecursive(v, o)

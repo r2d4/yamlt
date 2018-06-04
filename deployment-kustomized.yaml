@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    configured: kustomize
+  name: the-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo
+      configured: kustomize
+  template:
+    metadata:
+      labels:
+        app: demo
+        configured: kustomize
+        some: other-labels
+      name: the-pod
+    spec:
+      containers:
+      - image: container:v2
+        name: new-container
+      - image: container:v1
+        name: old-container
