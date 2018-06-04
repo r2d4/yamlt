@@ -9,11 +9,10 @@ spec:
       app: demo
   template:
     metadata:
-      name: the-pod
       labels:
         app: demo
-        some: other-labels
+      name: the-pod
     spec:
       containers:
-      - name: old-container
-        image: container:v1
+      - image: container:v2
+        name: new-container

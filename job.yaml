@@ -1,0 +1,11 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: templatin-our-jerbs
+spec:
+  template:
+    metadata:
+      name: the-pod
+      labels:
+        app: demo
+  backoffLimit: 1

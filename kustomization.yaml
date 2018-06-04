@@ -1,0 +1,8 @@
+commonLabels:
+  configured: kustomize
+
+resources:
+- deployment.yaml
+
+patches:
+- deployment-applied.yaml
