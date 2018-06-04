@@ -3,8 +3,8 @@ template:
   metadata:
     name: the-pod
     labels:
-      app: redis
+      app: demo
   spec:
     containers:
-    - name: the-container-remix
-      image: the-matrix
+    - name: new-container
+      image: container:v2

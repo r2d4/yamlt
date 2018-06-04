@@ -1,0 +1,9 @@
+# v1.VolumeClaimTemplate
+volumeClaimTemplates:
+- metadata:
+    name: some-volume
+  spec:
+    accessModes: [ "ReadWriteOnce" ]
+    resources:
+      requests:
+        storage: 1Gi

@@ -1,8 +1,9 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: the-deployment
+  name: the-stateful-set
 spec:
+  serviceName: "bozo"
   replicas: 3
   selector:
     matchLabels:
@@ -10,6 +11,8 @@ spec:
   template:
     metadata:
       name: the-pod
+      labels:
+        app: demo
     spec:
       containers:
       - name: old-container
